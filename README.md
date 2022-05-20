@@ -1,0 +1,2 @@
+# waitfordircontents
+Simplified/specialized inotifywait
