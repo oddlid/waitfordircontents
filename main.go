@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -13,9 +17,10 @@ import (
 )
 
 const (
-	optEnvVar  = "env-var"
-	optDir     = "directories"
-	optTimeout = "timeout"
+	optEnvVar          = "env-var"
+	optDir             = "directories"
+	optTimeout         = "timeout"
+	optExitOnWatchFail = "exit-on-watch-failure"
 )
 
 var (
@@ -51,6 +56,20 @@ func dirExists(path string) bool {
 	return info.IsDir()
 }
 
+func dirIsEmpty(path string) (bool, error) {
+	d, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer d.Close()
+
+	_, err = d.Readdirnames(1)
+	if err != nil && errors.Is(err, io.EOF) {
+		return true, nil
+	}
+	return false, err
+}
+
 func verifyDirs(paths []string) error {
 	if paths == nil || len(paths) == 0 {
 		return errNoDirs
@@ -63,10 +82,18 @@ func verifyDirs(paths []string) error {
 	return nil
 }
 
-func entryPoint(ctx *cli.Context) error {
+func setupSignalListening() <-chan os.Signal {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	return signals
+}
+
+func entryPoint(c *cli.Context) error {
+	timeout := c.Duration(optTimeout)
+	dirsFromCli := c.StringSlice(optDir)
+	dirsFromEnvVar := getPathsFromEnvVar(c.String(optEnvVar))
+	exitOnWatchFail := c.Bool(optExitOnWatchFail)
 	paths := []string{}
-	dirsFromCli := ctx.StringSlice(optDir)
-	dirsFromEnvVar := getPathsFromEnvVar(ctx.String(optEnvVar))
 	if len(dirsFromCli) > 0 {
 		paths = append(paths, dirsFromCli...)
 	}
@@ -74,11 +101,45 @@ func entryPoint(ctx *cli.Context) error {
 		paths = append(paths, dirsFromEnvVar...)
 	}
 	log.Info().Strs("dirs", paths).Msg("Directories to watch")
+	if err := verifyDirs(paths); err != nil {
+		return err
+	}
 
 	// Create context, with timeout if given. Pass this to the watcher, so we have a way to quit
 	// if it either times out, or if we get a quit signal from the shell
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+	defer cancel()
 
-	return verifyDirs(paths)
+	signals := setupSignalListening()
+	dirWatcher := watcher{}
+	errChan, err := dirWatcher.start(ctx, paths)
+	if err != nil {
+		return err
+	}
+	done := dirWatcher.wait()
+
+	for {
+		select {
+		case <-signals:
+			cancel()
+		case err := <-errChan:
+			log.Error().Err(err).Msg("Watch error")
+			if exitOnWatchFail {
+				log.Warn().Msg("Set to exit on watch failure, bailing out")
+				cancel()
+				<-done
+				return err
+			}
+		case <-done:
+			return nil
+		}
+	}
 }
 
 func main() {
@@ -110,8 +171,14 @@ func main() {
 				Aliases: []string{"d"},
 			},
 			&cli.DurationFlag{
-				Name:  optTimeout,
-				Usage: "How long to wait before giving up. 0 means wait forever.",
+				Name:    optTimeout,
+				Usage:   "How long to wait before giving up. 0 means wait forever.",
+				Aliases: []string{"t"},
+			},
+			&cli.BoolFlag{
+				Name:    optExitOnWatchFail,
+				Usage:   "Exit with error if a watch failure happens",
+				Aliases: []string{"x"},
 			},
 		},
 	}

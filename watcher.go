@@ -12,16 +12,25 @@ type watcher struct {
 	wg sync.WaitGroup
 }
 
-func (w *watcher) start(ctx context.Context, paths []string) error {
+func (w *watcher) start(ctx context.Context, paths []string) (<-chan error, error) {
+	errChan := make(chan error, 1)
 	for _, path := range paths {
-		if err := w.watch(ctx, path); err != nil {
-			return err
+		empty, err := dirIsEmpty(path)
+		if err != nil {
+			return errChan, err
+		}
+		if !empty {
+			log.Warn().Str("dir", path).Msg("Directory not empty, skipping")
+			continue
+		}
+		if err := w.watch(ctx, path, errChan); err != nil {
+			return errChan, err
 		}
 	}
-	return nil
+	return errChan, nil
 }
 
-func (w *watcher) watch(ctx context.Context, path string) error {
+func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) error {
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -43,13 +52,13 @@ func (w *watcher) watch(ctx context.Context, path string) error {
 				if !ok {
 					return
 				}
-				log.Info().Msg(event.String())
+				log.Info().Str("event", event.String()).Msg("Got watcher event")
 				return
 			case err, ok := <-fsWatcher.Errors:
 				if !ok {
 					return
 				}
-				log.Info().Err(err).Send()
+				errChan <- err
 				return
 			}
 		}
@@ -57,6 +66,11 @@ func (w *watcher) watch(ctx context.Context, path string) error {
 	return nil
 }
 
-func (w *watcher) wait() {
-	w.wg.Wait()
+func (w *watcher) wait() <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	return done
 }
