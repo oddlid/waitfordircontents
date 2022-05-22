@@ -1,6 +1,7 @@
 # waitfordircontents
 Simplified/specialized inotifywait
 
+```
 NAME:
    waitfordircontents - Wait until given directories are not empty
 
@@ -23,3 +24,4 @@ GLOBAL OPTIONS:
 COPYRIGHT:
    (C) 2022 Odd Eivind Ebbesen
 
+```
