@@ -38,11 +38,14 @@ func entryPoint(c *cli.Context) error {
 	defer cancel()
 
 	signals := setupSignalListening()
-	eventFilter := func(e fsnotify.Event) bool {
-		return e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Write != 0
-	}
 	dirWatcher := watcher{}
-	errChan, err := dirWatcher.start(ctx, paths, eventFilter)
+	errChan, err := dirWatcher.start(
+		ctx,
+		paths,
+		func(e fsnotify.Event) bool {
+			return e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Write != 0
+		},
+	)
 	if err != nil {
 		return err
 	}
