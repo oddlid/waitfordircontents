@@ -35,8 +35,7 @@ func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) 
 	if err != nil {
 		return err
 	}
-	err = fsWatcher.Add(path)
-	if err != nil {
+	if err := fsWatcher.Add(path); err != nil {
 		return err
 	}
 
@@ -71,6 +70,7 @@ func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) 
 			}
 		}
 	}()
+
 	return nil
 }
 
