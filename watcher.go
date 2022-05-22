@@ -20,7 +20,7 @@ func (w *watcher) start(ctx context.Context, paths []string) (<-chan error, erro
 			return errChan, err
 		}
 		if !empty {
-			log.Warn().Str("dir", path).Msg("Directory not empty, skipping")
+			log.Warn().Str("dir", path).Msg("Directory has content, skipping")
 			continue
 		}
 		if err := w.watch(ctx, path, errChan); err != nil {
@@ -40,6 +40,10 @@ func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) 
 		return err
 	}
 
+	eventIsInteresting := func(e fsnotify.Event) bool {
+		return e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Write != 0
+	}
+
 	w.wg.Add(1)
 	go func() {
 		defer fsWatcher.Close()
@@ -52,7 +56,11 @@ func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) 
 				if !ok {
 					return
 				}
-				log.Info().Str("event", event.String()).Msg("Got watcher event")
+				if !eventIsInteresting(event) {
+					log.Info().Str("event", event.String()).Msg("Skipped event")
+					continue
+				}
+				log.Info().Str("event", event.String()).Msg("Event fulfilled, returning")
 				return
 			case err, ok := <-fsWatcher.Errors:
 				if !ok {
