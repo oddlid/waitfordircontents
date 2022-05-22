@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
 )
@@ -37,8 +38,11 @@ func entryPoint(c *cli.Context) error {
 	defer cancel()
 
 	signals := setupSignalListening()
+	eventFilter := func(e fsnotify.Event) bool {
+		return e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Write != 0
+	}
 	dirWatcher := watcher{}
-	errChan, err := dirWatcher.start(ctx, paths)
+	errChan, err := dirWatcher.start(ctx, paths, eventFilter)
 	if err != nil {
 		return err
 	}

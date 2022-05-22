@@ -12,7 +12,9 @@ type watcher struct {
 	wg sync.WaitGroup
 }
 
-func (w *watcher) start(ctx context.Context, paths []string) (<-chan error, error) {
+type eventFilterFunc func(e fsnotify.Event) bool
+
+func (w *watcher) start(ctx context.Context, paths []string, eventFilter eventFilterFunc) (<-chan error, error) {
 	errChan := make(chan error, 1)
 	for _, path := range paths {
 		empty, err := dirIsEmpty(path)
@@ -23,24 +25,20 @@ func (w *watcher) start(ctx context.Context, paths []string) (<-chan error, erro
 			log.Warn().Str("dir", path).Msg("Directory has content, skipping")
 			continue
 		}
-		if err := w.watch(ctx, path, errChan); err != nil {
+		if err := w.watch(ctx, path, errChan, eventFilter); err != nil {
 			return errChan, err
 		}
 	}
 	return errChan, nil
 }
 
-func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) error {
+func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error, eventFilter eventFilterFunc) error {
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
 	if err := fsWatcher.Add(path); err != nil {
 		return err
-	}
-
-	eventIsInteresting := func(e fsnotify.Event) bool {
-		return e.Op&fsnotify.Create != 0 || e.Op&fsnotify.Write != 0
 	}
 
 	w.wg.Add(1)
@@ -55,7 +53,7 @@ func (w *watcher) watch(ctx context.Context, path string, errChan chan<- error) 
 				if !ok {
 					return
 				}
-				if !eventIsInteresting(event) {
+				if !eventFilter(event) {
 					log.Info().Str("event", event.String()).Msg("Skipped event")
 					continue
 				}
